@@ -185,4 +185,56 @@ with tempfile.TemporaryDirectory() as td:
     assert r.status == 400, 'state file must not be readable'
     srv.shutdown()
 
+# ── lone surrogate in a command must not raise (killed /cmd + scheduler thread) ──
+remora._rcon_pkt(1, 2, '\ud800list')   # would raise UnicodeEncodeError before the fix
+
+# ── case-insensitive filesystems must not leak remora.json via REMORA.JSON ──
+with tempfile.TemporaryDirectory() as td:
+    b = Path(td)
+    for variant in ('remora.json', 'REMORA.JSON', 'Remora.Json', 'remora.JSON'):
+        assert remora.safe_path(b, variant) is None, f'{variant} must be blocked'
+
+# ── SSE onerror must trigger a refresh so the 401-handler can redirect ──
+assert 'es.close();refreshSoon();setTimeout(connect,3000)' in remora.PAGE, \
+    'expired-session tab would loop /events forever without refreshSoon in onerror'
+
+# ── backup pipeline: real coverage (dereference symlinked world; disk-guard
+#    must NOT leave autosave off) ──
+import tarfile as _tar, shutil as _sh
+def _run_backup_env(free_bytes):
+    calls = []
+    orig_rcon, orig_disk = remora.rcon, _sh.disk_usage
+    remora.rcon = lambda cmd, timeout=10: (calls.append(cmd), '')[1]
+    class _DU:  # mimic shutil.disk_usage(...).free
+        free = free_bytes
+    _sh.disk_usage = lambda p: _DU
+    return calls, (orig_rcon, orig_disk)
+with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as store:
+    d = Path(td)
+    (d / 'server.properties').write_text('level-name=world\n')
+    real = Path(store); (real / 'region').mkdir()
+    (real / 'level.dat').write_bytes(b'DATA')
+    (d / 'world').symlink_to(real)           # world is a symlink to another disk
+    remora.SERVER_DIR, remora.BACKUP_DIR = d, d / 'backups'
+    remora.SERVER_UP = True
+    # A) normal backup: symlinked world must be dereferenced into the archive
+    calls, (orig_rcon, orig_disk) = _run_backup_env(10**12)
+    try:
+        assert remora.run_backup() is None, 'backup should succeed'
+        tgz = list((d / 'backups').glob('backup-*.tgz'))
+        assert len(tgz) == 1, tgz
+        names = _tar.open(tgz[0]).getnames()
+        assert 'world/level.dat' in names, f'symlinked world not dereferenced: {names}'
+        assert 'save-off' in calls and 'save-on' in calls
+        tgz[0].unlink()
+    finally:
+        remora.rcon, _sh.disk_usage = orig_rcon, orig_disk
+    # B) disk-space guard fires BEFORE any save-off (else autosave stays off)
+    calls, (orig_rcon, orig_disk) = _run_backup_env(1)
+    try:
+        assert remora.run_backup() == 'not enough disk space'
+        assert 'save-off' not in calls, 'disk guard must not leave autosave off'
+    finally:
+        remora.rcon, _sh.disk_usage = orig_rcon, orig_disk
+
 print('all checks pass')

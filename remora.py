@@ -101,7 +101,10 @@ def login_failed(ip):
 RCON_LOCK = threading.Lock()
 
 def _rcon_pkt(rid, ptype, body):
-    p = struct.pack('<ii', rid, ptype) + body.encode() + b'\x00\x00'
+    # 'replace': a lone UTF-16 surrogate in a command (valid JSON) would raise
+    # UnicodeEncodeError here, which rcon()'s except doesn't catch — that killed
+    # the /cmd request and, via a bad schedule action, the scheduler thread.
+    p = struct.pack('<ii', rid, ptype) + body.encode('utf-8', 'replace') + b'\x00\x00'
     return struct.pack('<i', len(p)) + p
 
 def _rcon_recv(s):
@@ -195,14 +198,14 @@ def load_history():
     logs.sort()
     for day, _, p in logs:
         try:
-            with gzip.open(p, 'rt', errors='replace') as f:
+            with gzip.open(p, 'rt', encoding='utf-8', errors='replace') as f:
                 for line in f:
                     _ingest(line, day, live=False)
         except OSError:
             pass
     try:
         day = date.fromtimestamp(LOG_PATH.stat().st_mtime).isoformat()
-        for line in open(LOG_PATH, errors='replace'):
+        for line in open(LOG_PATH, encoding='utf-8', errors='replace'):
             _ingest(line, day, live=False)
     except OSError:
         pass
@@ -246,7 +249,10 @@ def tail_loop():
             if f is None or st.st_ino != ino or st.st_size < f.tell():
                 if f:
                     f.close()
-                f = open(LOG_PATH, errors='replace')
+                    f = None   # a failed reopen must not leave a closed-but-
+                               # not-None f; next iter's f.tell() would raise
+                               # ValueError and kill the tail thread for good.
+                f = open(LOG_PATH, encoding='utf-8', errors='replace')
                 ino = st.st_ino
                 frag = ''
                 if first:            # backlog already loaded by load_history
@@ -341,12 +347,15 @@ def metrics_loop():
 
 # ── backups ──────────────────────────────────────────────────────────────
 BACKUP_LOCK = threading.Lock()
+EDIT_LOCK = threading.Lock()   # serialize file_put: shared .remora-tmp name
+                               # made concurrent saves of one file crash on replace
 BACKUP_NAME = re.compile(r'^backup-\d{8}-\d{6}\.tgz$')
 
 def backup_targets():
     level = 'world'
     try:
-        for ln in open(SERVER_DIR / 'server.properties'):
+        for ln in open(SERVER_DIR / 'server.properties',
+                       encoding='utf-8', errors='replace'):
             if ln.startswith('level-name='):
                 level = ln.split('=', 1)[1].strip() or 'world'
     except OSError:
@@ -366,7 +375,10 @@ def run_backup(reason='manual'):
         return 'backup already running'
     try:
         # Server up but RCON unresponsive → don't tar a live-written world.
-        if SERVER_UP and rcon('save-off') is None:
+        # Liveness probe must be 'list', NOT 'save-off': the disk-space guard
+        # below can return early, and save-off is only undone by the finally
+        # after line ~389 — probing with save-off left autosave off forever.
+        if SERVER_UP and rcon('list') is None:
             publish({'type': 'backup', 'ok': False,
                      'msg': 'server not responding — backup aborted'})
             return 'server unresponsive'
@@ -386,9 +398,18 @@ def run_backup(reason='manual'):
             def flt(ti):
                 return None if '/backups/' in ti.name or ti.name.endswith('.jar') \
                     else ti
-            with tarfile.open(BACKUP_DIR / name, 'w:gz', compresslevel=1) as tar:
-                for t in targets:
-                    tar.add(t, arcname=t.name, filter=flt)
+            try:
+                # dereference=True: a symlinked world dir would otherwise store
+                # only the bare symlink entry — a '0 MB done' backup with no data.
+                with tarfile.open(BACKUP_DIR / name, 'w:gz', compresslevel=1,
+                                  dereference=True) as tar:
+                    for t in targets:
+                        tar.add(t, arcname=t.name, filter=flt)
+            except OSError:
+                # a file vanishing mid-tar leaves a well-formed but INCOMPLETE
+                # archive that reads clean and would displace a good one at prune.
+                (BACKUP_DIR / name).unlink(missing_ok=True)
+                raise
         finally:
             rcon('save-on')
         keep = max(1, int(STATE.get('keep_backups', 5)))   # never prune to zero
@@ -477,8 +498,8 @@ def safe_path(base, rel):
     base = base.resolve()
     if p != base and base not in p.parents:
         return None
-    if p.name == 'remora.json':
-        return None
+    if p.name.lower() == 'remora.json':   # case-insensitive: NTFS/APFS treat
+        return None                        # REMORA.JSON as the same file → leak
     return p
 
 # ── HTTP ─────────────────────────────────────────────────────────────────
@@ -751,11 +772,14 @@ class Handler(BaseHTTPRequestHandler):
         if not p or not p.parent.is_dir() or (p.exists() and not p.is_file()):
             return self._json({'error': 'bad path'}, 400)
         content = str(body.get('content', ''))
-        if p.is_file():
-            shutil.copy2(p, str(p) + '.bak')
-        tmp = p.with_name(p.name + '.remora-tmp')
-        tmp.write_text(content)
-        tmp.replace(p)
+        with EDIT_LOCK:   # shared tmp name → concurrent saves raced on replace()
+            if p.is_file():
+                shutil.copy2(p, str(p) + '.bak')
+            tmp = p.with_name(p.name + '.remora-tmp')
+            # utf-8 + LF: Windows ANSI codepage would mojibake/crash on non-ASCII
+            # config values and translate LF→CRLF on save.
+            tmp.write_text(content, encoding='utf-8', newline='\n')
+            tmp.replace(p)
         return self._json({'ok': True})
 
     def stream_file(self, p, ctype):
@@ -1152,7 +1176,7 @@ function connect(){if(es)es.close();es=new EventSource('events');
   else if(e.type==='backup'){toast(e.msg,!e.ok);if(e.done)refreshSoon()}};
  // EventSource auto-retries, but if the server closed us as a slow consumer
  // force a fresh connection so we don't sit on a dead 'connecting' dot.
- es.onerror=()=>{setDot(null);if(es.readyState===2){es.close();setTimeout(connect,3000)}}}
+ es.onerror=()=>{setDot(null);if(es.readyState===2){es.close();refreshSoon();setTimeout(connect,3000)}}}
 function setDot(up){$('#dot').className=up==null?'':up?'up':'down';
  $('#dot').title=up==null?'connecting':up?'online':'offline';
  $('#upinfo').textContent=up===false?'server offline':''}
@@ -1172,7 +1196,8 @@ window.addEventListener('resize',drawSparks);
 def read_props():
     props = {}
     try:
-        for ln in open(SERVER_DIR / 'server.properties'):
+        for ln in open(SERVER_DIR / 'server.properties',
+                       encoding='utf-8', errors='replace'):
             if '=' in ln and not ln.startswith('#'):
                 k, v = ln.split('=', 1)
                 props[k.strip()] = v.strip()
@@ -1196,6 +1221,10 @@ def init(args):
     load_state()
 
 def main():
+    # line-buffer stdout: under systemd the generated first-run password was
+    # printed into a block-buffered pipe that never flushed — new users got
+    # locked out with no password anywhere in the journal.
+    sys.stdout.reconfigure(line_buffering=True)
     ap = argparse.ArgumentParser(
         description='remora — single-file web panel for a running Minecraft server')
     ap.add_argument('server_dir', help='server directory (with server.properties)')

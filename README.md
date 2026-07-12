@@ -15,6 +15,20 @@ python3 remora.py /path/to/server --port 8765
 
 That's the whole install. One file, Python 3.11+ standard library only.
 
+## Where it runs
+
+remora must run **on the same machine as the Minecraft server** — it reads
+the server directory, tails the logs and watches the java process. You do
+*not* need a second host for it; it idles at ~15 MB RAM next to your server.
+
+- **Your own machine or VPS / root server / Raspberry Pi** — the target. Works.
+- **Windows** — works; only the RAM/CPU tiles stay empty (they need Linux `/proc`).
+- **Server in Docker** (e.g. `itzg/minecraft-server`) — run remora on the host,
+  point it at the mounted data dir, map the RCON port to `127.0.0.1`.
+  RAM/CPU tiles stay empty.
+- **Managed hosting without shell access** (Aternos, Nitrado, Shockbyte, …) —
+  not supported. remora needs the server's files; a panel + FTP isn't enough.
+
 ## Why
 
 Pterodactyl is a fleet manager (Docker, MySQL, Redis, a daemon). Crafty is an

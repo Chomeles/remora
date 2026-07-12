@@ -296,6 +296,8 @@ def is_our_java(pid):
         return False
 
 def find_java_pid():
+    if not os.path.isdir('/proc'):   # ponytail: Windows/mac — no /proc, RAM/CPU tiles stay empty
+        return None
     for p in os.listdir('/proc'):
         if p.isdigit() and is_our_java(int(p)):
             return int(p)
@@ -304,7 +306,7 @@ def find_java_pid():
 def metrics_loop():
     global ONLINE
     pid, prev_cpu, prev_t = None, None, None
-    clk = os.sysconf('SC_CLK_TCK')
+    clk = os.sysconf('SC_CLK_TCK') if hasattr(os, 'sysconf') else 100
     while True:
         out = rcon('list', timeout=5)
         set_status(out is not None)

@@ -6,7 +6,7 @@
 # is the real safety net. Wired via cron; safe to run by hand.
 set -uo pipefail
 cd "$(dirname "$0")"
-export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+export PATH="/root/.local/bin:$PATH"
 
 exec 9>/tmp/remora-improve.lock
 flock -n 9 || { echo "already running"; exit 0; }
@@ -23,22 +23,6 @@ if ! green; then
   echo "repo already red at $GOOD — aborting, needs a human" | tee -a "$LOG"
   exit 1
 fi
-
-# One lens per 6h cron slot, stateless rotation — a single fixed prompt makes
-# the agent converge on the same corner (three security runs missed a UX bug).
-LENSES=(
-  'correctness bugs in edge cases: races, encodings, protocol framing, log rotation'
-  'security hardening: auth, sessions, path handling, injection, resource exhaustion'
-  'the stranger test: fresh install as a Windows / LAN / Docker home-hoster — walk the first 10 minutes like someone who has never seen this repo'
-  'UX and accessibility of the embedded UI: keyboard, mobile, contrast, empty states, error messages'
-  'docs accuracy: does README.md match what the code actually does, flag for flag?'
-  'test coverage: the riskiest logic that test_remora.py does not currently fail on'
-)
-LENS="${LENSES[$(( $(date +%s) / 21600 % ${#LENSES[@]} ))]}"
-
-# Real users beat lenses: open issues become the run's priority the moment
-# the first one exists (empty until then — costs one gh call).
-ISSUES="$(gh issue list -R Chomeles/remora --state open --limit 10 2>/dev/null)"
 
 PROMPT='You maintain remora.py, a single-file zero-dependency Python web panel for
 Minecraft servers (see README.md). Make exactly ONE worthwhile improvement this run,
@@ -58,24 +42,9 @@ Rules — non-negotiable:
   Do NOT run destructive git commands (reset --hard, push, rebase). Do NOT restart
   services — the wrapper handles that.
 
-Look at recent git log first to avoid repeating past work — including past
-"audit: ... no bug" commits, those questions are settled. If you investigate a
-concrete suspicion and REFUTE it (by experiment or e2e check, not by reading),
-that counts as this run'"'"'s improvement: commit the refutation as
-"audit: <topic> — no bug, <how verified>" so no future run re-litigates it.
-One improvement, verified, committed. Go.'
-
-PROMPT="$PROMPT
-
-Focus lens for THIS run: $LENS
-Search there first; step outside the lens only for something clearly more severe."
-if [ -n "$ISSUES" ]; then
-  PROMPT="$PROMPT
-
-PRIORITY OVERRIDE — open GitHub issues from real users exist. Reproduce and fix
-one of these first (reference #N in the commit message):
-$ISSUES"
-fi
+Pick from: correctness bugs, security hardening, UX/accessibility of the embedded UI,
+docs accuracy, test coverage, or a small high-value feature. Look at recent git log to
+avoid repeating past work. One improvement, verified, committed. Go.'
 
 echo "=== remora-improve $STAMP (from $GOOD) ===" | tee -a "$LOG"
 timeout 1800 claude -p "$PROMPT" --dangerously-skip-permissions >>"$LOG" 2>&1

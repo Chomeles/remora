@@ -99,6 +99,7 @@ def login_failed(ip):
 
 # ── RCON (minimal client, Source RCON protocol) ──────────────────────────
 RCON_LOCK = threading.Lock()
+_RCON_AUTH_WARNED = False   # print the auth-mismatch hint once, not every poll
 
 def _rcon_pkt(rid, ptype, body):
     # 'replace': a lone UTF-16 surrogate in a command (valid JSON) would raise
@@ -135,7 +136,13 @@ def rcon(cmd, timeout=10):
             with socket.create_connection(RCON_ADDR, timeout=timeout) as s:
                 s.sendall(_rcon_pkt(1, 3, RCON_PW))
                 rid, _ = _rcon_recv(s)
-                if rid == -1:
+                if rid == -1:                     # auth rejected
+                    global _RCON_AUTH_WARNED
+                    if not _RCON_AUTH_WARNED:     # once: else it floods on every poll
+                        _RCON_AUTH_WARNED = True
+                        print('rcon: auth failed — rcon.password in server.properties '
+                              'does not match the running server (restart the server '
+                              'after editing it)', file=sys.stderr, flush=True)
                     return None
                 s.sendall(_rcon_pkt(2, 2, cmd))
                 # ponytail: single response packet. Vanilla fragments bodies
@@ -161,7 +168,13 @@ SAY_RE = re.compile(TS_INFO + r'(?:\[Not Secure\] \[(.{1,48}?)\]|\[(Rcon|Server)
 JOIN_RE = re.compile(TS_INFO + r'(.{1,48}?) joined the game$')
 LEAVE_RE = re.compile(TS_INFO + r'(.{1,48}?) left the game$')
 WL_LINE = re.compile(r'white-?list', re.I)
-WL_NAME = re.compile(r'(?:name=|Disconnecting )([^\s,()\[\]]{1,48})')
+# Two forms of whitelist-rejection line. Modern (Paper/1.20.2+): 'Disconnecting
+# <name> (/ip): ...'. Classic vanilla (1.7–1.20.1): 'Disconnecting
+# com.mojang.authlib.GameProfile@hash[...,name=<name>,...] (/ip): ...'. Try
+# name= first — re picks the leftmost POSITION, so a single alternation with
+# 'Disconnecting ' first always captured the GameProfile toString garbage.
+WL_NAME = re.compile(r'name=([^,()\[\]]{1,48})')
+WL_NAME2 = re.compile(r'Disconnecting (.{1,48}?) \(/')
 DONE_RE = re.compile(TS_INFO + r'Done \(')
 STOP_RE = re.compile(TS_INFO + r'Stopping server')
 
@@ -221,7 +234,7 @@ def _ingest(line, day, live=True):
         if ev:
             FEED.append(ev)
         if WL_LINE.search(line) and 'INFO' in line:
-            if m := WL_NAME.search(line):
+            if m := (WL_NAME.search(line) or WL_NAME2.search(line)):
                 # bounded: bots probing random names must not grow this forever;
                 # pop-then-set keeps insertion order = recency, evict oldest.
                 ATTEMPTS.pop(m[1], None)
@@ -796,11 +809,12 @@ class Handler(BaseHTTPRequestHandler):
                 while remaining > 0:      # Content-Length (corrupts keep-alive)
                     buf = f.read(min(65536, remaining))
                     if not buf:
-                        break
+                        self.close_connection = True   # short read: file shrank,
+                        break                          # fewer bytes than promised
                     self.wfile.write(buf)
                     remaining -= len(buf)
         except OSError:
-            pass
+            self.close_connection = True   # partial body already on the wire
 
     def backup_dl(self, name):
         if not BACKUP_NAME.fullmatch(name):
@@ -1012,7 +1026,10 @@ const toast=(msg,bad)=>{const d=document.createElement('div');
 // tabs
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
- document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.s));});
+ document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.s));
+ // console was seeded while hidden (scrollHeight 0) → land at newest, not oldest;
+ // !scrollTop guard preserves a deliberate scroll-up.
+ if(b.dataset.s==='cons'){const c=$('#console');if(!c.scrollTop)c.scrollTop=c.scrollHeight}});
 $('#logout').onclick=async()=>{await api('logout',{});location='login'};
 
 // ── dashboard ──
@@ -1218,6 +1235,9 @@ def init(args):
                  '(remora attaches via RCON)')
     RCON_ADDR = ('127.0.0.1', int(props.get('rcon.port', 25575)))
     RCON_PW = props.get('rcon.password', '')
+    if not RCON_PW:   # Minecraft disables RCON entirely without a password
+        sys.exit('error: rcon.password is empty in server.properties — set one '
+                 'and restart the server (Minecraft disables RCON without it)')
     load_state()
 
 def main():

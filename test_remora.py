@@ -103,7 +103,19 @@ assert len(remora.ATTEMPTS) == 30, len(remora.ATTEMPTS)
 assert 'Bot39' in remora.ATTEMPTS and 'Bot9' not in remora.ATTEMPTS, 'oldest must be evicted'
 remora._ingest(wl_line.format(0, 10), 'd', live=False)   # re-attempt refreshes recency
 assert next(iter(remora.ATTEMPTS)) != 'Bot10' and 'Bot10' in remora.ATTEMPTS
+remora.ATTEMPTS.clear()
+# classic vanilla (1.7-1.20.1) whitelist reject logs the GameProfile toString,
+# not a plain name — WL_NAME must still extract the real name= value
+_classic = ('[20:24:12] [Server thread/INFO]: Disconnecting com.mojang.authlib.'
+            'GameProfile@e6d7742[id=<null>,name=.Gamer Tag,properties={},legacy=false]'
+            ' (/127.0.0.1:51234): You are not white-listed on this server!')
+remora._ingest(_classic, 'd', live=False)
+assert list(remora.ATTEMPTS) == ['.Gamer Tag'], remora.ATTEMPTS
 remora.ATTEMPTS.clear(); remora.FEED.clear(); remora.CONSOLE.clear()
+
+# ── console auto-follows to newest when its tab is first opened ──
+assert "if(!c.scrollTop)c.scrollTop=c.scrollHeight" in remora.PAGE, \
+    'console tab must jump to newest line on open'
 
 # ── rate-limit key prunes stale ips (forged-XFF flood can't grow the dict) ──
 remora.LOGIN_FAILS.clear()

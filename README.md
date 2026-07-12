@@ -85,6 +85,7 @@ happening without SSH.
    After=network.target
 
    [Service]
+   User=minecraft
    ExecStart=/usr/bin/python3 /opt/remora/remora.py /srv/minecraft --port 8765
    Restart=on-failure
 

@@ -116,4 +116,9 @@ assert not remora.login_allowed('1.2.3.4'), '9th attempt must be blocked'
 assert remora.login_allowed('5.6.7.8'), 'other ip unaffected'
 remora.LOGIN_FAILS.clear()
 
+# ── POST body must be a dict — "[]"/"null" crashed the handler (AttributeError) ──
+import inspect
+src = inspect.getsource(remora.Handler.do_POST)
+assert 'isinstance(body, dict)' in src, 'non-dict JSON guard missing in do_POST'
+
 print('all checks pass')

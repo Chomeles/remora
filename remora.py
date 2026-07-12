@@ -579,6 +579,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
             body = {}
+        if not isinstance(body, dict):   # "[]"/"null" must not crash the handler
+            body = {}
         if path == '/login':
             return self.login(body)
         if not self._authed():

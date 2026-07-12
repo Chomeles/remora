@@ -1,74 +1,107 @@
-# ✂️ shears
+# 🦈 remora
 
-**A dead-simple web admin panel for any Minecraft server.** One file, zero dependencies, browser setup wizard. Works with Vanilla, Paper, Spigot, Fabric, Purpur — anything with RCON.
+**A single-file, zero-dependency web panel for Minecraft servers.**
 
-![panel](docs/screenshot.png)
+![remora dashboard](docs/screenshot.png)
+
+Like the remora fish, it attaches to a big animal instead of being one:
+remora talks to your **already-running** server through RCON and its log
+files. It never owns the java process — so it works with whatever already
+runs your server: systemd, screen, tmux, docker, a hosting panel's wrapper.
+
+```
+python3 remora.py /path/to/server --port 8765
+```
+
+That's the whole install. One file, Python 3.11+ standard library only.
+
+## Why
+
+Pterodactyl is a fleet manager (Docker, MySQL, Redis, a daemon). Crafty is an
+app. remora is **one Python file** you drop next to your server for the 90%
+case: one server, one or two admins, and you want to see and steer what's
+happening without SSH.
 
 ## Features
 
-- 🟢 See who's online — kick or ban with one click
-- 📋 Manage the whitelist (add / remove / ban)
-- 🚫 Ban list with one-click pardon
-- 📢 Broadcast messages to all players
-- ⌨️ Run any console command from the browser
-- 🧭 Bedrock/Geyser support: names starting with `.` are routed to `fwhitelist` (Floodgate)
-- 🔒 Built-in login (no reverse proxy needed), password stored hashed (PBKDF2)
-- 🪄 First start = setup wizard in the browser. No config files to edit.
+- **Live console** — log lines stream in via SSE, run any command
+- **Full chat history** — parsed from *rotated* logs too, so it survives
+  server restarts; live chat + join/leave feed; talk as the server
+- **Player management** — online list, kick / ban / pardon / op,
+  whitelist with one click, **rejected-join queue** (players who tried to
+  join while not whitelisted — approve or ban them from the panel)
+- **Bedrock/Geyser aware** — Floodgate `.name` players are whitelisted
+  through `fwhitelist` automatically
+- **Metrics** — players, TPS, java memory as 24h sparklines
+- **Backups** — world + configs as `.tgz` with `save-off`/`save-all` around
+  it, pruning, download, disk-space guard
+- **Scheduler** — daily backup / restart / any command at a fixed time
+- **File editor** — edit configs in the browser (previous version kept as
+  `.bak`), download anything; path-traversal safe
+- **Start / stop / restart** — graceful stop via RCON, start via a command
+  you configure (e.g. `systemctl start minecraft`)
+- **Auth built in** — PBKDF2 password, signed session cookies, login rate
+  limiting, Origin checks; or `--no-auth` behind an authenticating proxy
 
-## Quick start
+## Setup
 
-### Docker (recommended)
+1. Enable RCON in `server.properties` (remora reads the password itself):
 
-```bash
-docker run -d -p 8080:8080 -v shears:/data --name shears ghcr.io/chomeles/shears
+   ```properties
+   enable-rcon=true
+   rcon.port=25575
+   rcon.password=pick-something-long
+   ```
+
+2. Run remora as the same user as the server (it reads the server dir and
+   `/proc` of the java process):
+
+   ```
+   python3 remora.py /srv/minecraft --port 8765
+   ```
+
+   On first start it prints a generated admin password. Change it in
+   Settings, or set your own: `python3 remora.py /srv/minecraft --set-password`
+
+3. Optional systemd unit:
+
+   ```ini
+   [Unit]
+   Description=remora MC panel
+   After=network.target
+
+   [Service]
+   ExecStart=/usr/bin/python3 /opt/remora/remora.py /srv/minecraft --port 8765
+   Restart=on-failure
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+## Security notes
+
+- remora binds to `127.0.0.1` by default. To expose it, put a TLS reverse
+  proxy in front (Caddy/nginx). All URLs are relative, so serving it under a
+  sub-path (`/mc/`) works out of the box — strip the prefix in your proxy.
+- The panel is an **admin** tool: a logged-in user has full RCON and can edit
+  server files. Don't hand out the password to non-admins.
+- `--no-auth` disables the built-in login entirely — only use it when your
+  reverse proxy already authenticates every request.
+- State (password hash, session secret, schedules) lives in
+  `remora.json` in the server dir, mode 0600, and is hidden from the
+  panel's own file manager.
+
+## Restore a backup
+
+```
+# stop the server first, then:
+tar xzf backups/backup-YYYYMMDD-HHMMSS.tgz -C /path/to/server
 ```
 
-### Without Docker
+## Development
 
-Needs only Python 3.9+ — no pip packages:
-
-```bash
-curl -O https://raw.githubusercontent.com/Chomeles/shears/main/shears.py
-python3 shears.py
-```
-
-Then open **http://localhost:8080** and follow the wizard.
-
-## Enable RCON on your Minecraft server
-
-In your server's `server.properties`:
-
-```properties
-enable-rcon=true
-rcon.port=25575
-rcon.password=choose-a-strong-password
-```
-
-Restart the server once. That's it — the wizard has a "Test connection" button.
-
-> If the panel runs on a different machine than the server, make sure the RCON port is reachable (but **never** expose RCON to the public internet — use a private network, VPN, or run the panel on the same host).
-
-## Configuration
-
-Everything is set up through the wizard and stored in `data/config.json`. Optional environment variables:
-
-| Variable | Default | |
-|---|---|---|
-| `MCADMIN_PORT` | `8080` | HTTP port |
-| `MCADMIN_BIND` | `0.0.0.0` | Bind address |
-| `MCADMIN_DATA` | `./data` | Config directory |
-
-To reset everything (password forgotten, wrong server): delete `data/config.json` and restart — the wizard reappears.
-
-## HTTPS
-
-Put it behind any reverse proxy (Caddy, nginx, Traefik) or a tunnel (Cloudflare Tunnel, Tailscale). Example Caddyfile:
-
-```
-mc.example.com {
-    reverse_proxy localhost:8080
-}
-```
+`python3 test_remora.py` runs the self-checks (parser, auth, path safety,
+RCON framing). The whole panel is ~1000 lines in one file — read it.
 
 ## License
 

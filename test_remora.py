@@ -132,4 +132,12 @@ assert remora.Handler.timeout == 60, 'idle-connection timeout missing'
 assert 'ArrowUp' in remora.PAGE and 'ArrowDown' in remora.PAGE
 assert "$('#wlIn').onkeydown" in remora.PAGE, 'enter in whitelist input must add'
 
+# ── README accuracy: the "~N lines — read it" claim must not silently drift ──
+import pathlib
+_readme = pathlib.Path(__file__).with_name('README.md').read_text()
+_m = _re.search(r'~(\d+) lines', _readme)
+_actual = len(open(pathlib.Path(__file__).with_name('remora.py')).readlines())
+assert _m and abs(_actual - int(_m[1])) / _actual < 0.2, \
+    f'README claims ~{_m and _m[1]} lines, remora.py has {_actual}'
+
 print('all checks pass')

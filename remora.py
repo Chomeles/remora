@@ -725,6 +725,10 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             pass
         finally:
+            # SSE has no Content-Length, so this conn can't carry another
+            # response; without close an evicted slow consumer zombies in
+            # keep-alive for 60s and its EventSource never reconnects.
+            self.close_connection = True
             with SUBS_LOCK:
                 SUBS.discard(q)
 

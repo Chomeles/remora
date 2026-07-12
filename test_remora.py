@@ -195,6 +195,23 @@ with tempfile.TemporaryDirectory() as td:
     assert r.status == 200 and b'remora.json' not in data, '...but stays hidden'
     r, _ = req('GET', '/file?p=remora.json', hdrs={'Cookie': tok})
     assert r.status == 400, 'state file must not be readable'
+    # SSE: an evicted subscriber's socket must CLOSE (EOF), not zombie in
+    # keep-alive until the 60s handler timeout while the browser waits on a
+    # dead stream. The 5s client timeout below fails the test if it zombies.
+    import time as _time
+    c2 = http.client.HTTPConnection('127.0.0.1', srv.server_port, timeout=5)
+    c2.request('GET', '/events', headers={'Cookie': tok})
+    r2 = c2.getresponse()
+    assert r2.status == 200 and r2.fp.readline() == b': hi\n'
+    for _ in range(100):                     # wait for the sub to register
+        if remora.SUBS: break
+        _time.sleep(0.05)
+    (q,) = remora.SUBS
+    with remora.SUBS_LOCK:                   # simulate publish()'s slow-consumer
+        remora.SUBS.discard(q)               # eviction on queue.Full
+    q.put('bye')                             # wake the handler's blocking get()
+    r2.read()                                # must reach EOF, not time out
+    c2.close()
     srv.shutdown()
 
 # ── lone surrogate in a command must not raise (killed /cmd + scheduler thread) ──

@@ -572,12 +572,15 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- POST --
     def do_POST(self):
+        # Drain the body BEFORE any early rejection — an unread body corrupts
+        # the keep-alive stream (leftover bytes get parsed as the next request).
+        raw = self._body()
+        if raw is None:
+            self.close_connection = True   # oversized body was never drained
+            return self._json({'error': 'body too large'}, 413)
         if not self._origin_ok():
             return self._json({'error': 'bad origin'}, 403)
         path = self.path.partition('?')[0]
-        raw = self._body()
-        if raw is None:
-            return self._json({'error': 'body too large'}, 413)
         try:
             body = json.loads(raw) if raw else {}
         except json.JSONDecodeError:

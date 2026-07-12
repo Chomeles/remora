@@ -140,4 +140,49 @@ _actual = len(open(pathlib.Path(__file__).with_name('remora.py')).readlines())
 assert _m and abs(_actual - int(_m[1])) / _actual < 0.2, \
     f'README claims ~{_m and _m[1]} lines, remora.py has {_actual}'
 
+# ── e2e: the auth boundary over real HTTP (regression net for the LAN-cookie bug) ──
+import http.client, threading as _th
+from http.server import ThreadingHTTPServer
+with tempfile.TemporaryDirectory() as td:
+    d = Path(td)
+    (d / 'logs').mkdir()
+    (d / 'logs' / 'latest.log').write_text('')
+    (d / 'server.properties').write_text('enable-rcon=true\nrcon.port=1\n')
+    remora.SERVER_DIR, remora.STATE_PATH = d, d / 'remora.json'
+    remora.BACKUP_DIR, remora.LOG_PATH = d / 'backups', d / 'logs' / 'latest.log'
+    remora.RCON_ADDR = ('127.0.0.1', 1)      # closed port: rcon() fails fast
+    remora.NO_AUTH, remora.SERVER_UP = False, False
+    remora.STATE = {'pw': remora.hash_pw('hunter22'), 'secret': 'bb' * 32,
+                    'schedules': [], 'keep_backups': 5, 'start_cmd': ''}
+    remora.save_state()                       # remora.json exists on disk...
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), remora.Handler)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    c = http.client.HTTPConnection('127.0.0.1', srv.server_port, timeout=5)
+
+    def req(method, path, body=None, hdrs={}):
+        c.request(method, path, body, {'Content-Type': 'application/json', **hdrs})
+        r = c.getresponse()
+        return r, r.read()
+
+    r, _ = req('GET', '/state.json')
+    assert r.status == 401, 'unauthenticated state.json must 401'
+    r, _ = req('POST', '/login', '{"password":"wrong"}')
+    assert r.status == 403
+    r, _ = req('POST', '/login', '{"password":"hunter22"}',
+               {'Origin': 'https://evil.example'})
+    assert r.status == 403, 'cross-origin login must be rejected'
+    r, _ = req('POST', '/login', '{"password":"hunter22"}')
+    assert r.status == 200
+    ck = r.getheader('Set-Cookie')
+    assert 'HttpOnly' in ck and 'Secure' not in ck, \
+        'plain-http cookie must not be Secure (LAN login lockout)'
+    tok = ck.split(';')[0]
+    r, data = req('GET', '/state.json', hdrs={'Cookie': tok})
+    assert r.status == 200 and b'"whitelist"' in data
+    r, data = req('GET', '/files?d=', hdrs={'Cookie': tok})
+    assert r.status == 200 and b'remora.json' not in data, '...but stays hidden'
+    r, _ = req('GET', '/file?p=remora.json', hdrs={'Cookie': tok})
+    assert r.status == 400, 'state file must not be readable'
+    srv.shutdown()
+
 print('all checks pass')

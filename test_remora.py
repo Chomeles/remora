@@ -121,4 +121,11 @@ import inspect
 src = inspect.getsource(remora.Handler.do_POST)
 assert 'isinstance(body, dict)' in src, 'non-dict JSON guard missing in do_POST'
 
+# ── Secure cookie only over real TLS — Host-sniffing locked out LAN users
+# (browsers drop Secure cookies on plain-http non-localhost origins) ──
+src = inspect.getsource(remora.Handler.login)
+assert "'X-Forwarded-Proto'" in src and 'plain_local' not in src, \
+    'Secure must depend on X-Forwarded-Proto, never on Host guessing'
+assert remora.Handler.timeout == 60, 'idle-connection timeout missing'
+
 print('all checks pass')

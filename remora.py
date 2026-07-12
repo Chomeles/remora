@@ -485,6 +485,7 @@ def safe_path(base, rel):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
     server_version = f'remora/{VERSION}'
+    timeout = 60   # reap idle keep-alive conns and slowloris half-requests
 
     # -- plumbing --
     def _ip(self):
@@ -621,11 +622,11 @@ class Handler(BaseHTTPRequestHandler):
         if check_pw(str(body.get('password', ''))):
             tok = make_token(STATE['secret'])
             cookie = f'r_s={tok}; Path=/; Max-Age={7*86400}; HttpOnly; SameSite=Lax'
-            # Secure by default; only omit for plain-HTTP loopback dev access.
-            host = self.headers.get('Host', '').rsplit(':', 1)[0]
-            plain_local = self.headers.get('X-Forwarded-Proto', 'http') != 'https' \
-                and host in ('127.0.0.1', 'localhost', '::1')
-            if not plain_local:
+            # Secure only when the request really came over TLS (reverse proxy
+            # sets X-Forwarded-Proto). Marking it Secure on plain HTTP makes
+            # browsers DROP the cookie on non-localhost origins — which locked
+            # out LAN users (http://192.168.x.x) in an endless login loop.
+            if self.headers.get('X-Forwarded-Proto', '') == 'https':
                 cookie += '; Secure'
             return self._send(200, '{"ok": true}', 'application/json',
                               [('Set-Cookie', cookie)])

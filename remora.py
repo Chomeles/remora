@@ -21,7 +21,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 
 # ── globals set by init() ────────────────────────────────────────────────
 SERVER_DIR = None      # Path

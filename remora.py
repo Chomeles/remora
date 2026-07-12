@@ -1021,6 +1021,7 @@ function renderLists(){
 $('#wlBtn').onclick=async()=>{const n=$('#wlIn').value.trim();if(!n)return;
  const o=await api('action',{action:'whitelist_add',name:n});
  toast(o.out||'added');$('#wlIn').value='';refresh()};
+$('#wlIn').onkeydown=e=>{if(e.key==='Enter')$('#wlBtn').onclick()};
 $('#sayBtn').onclick=send_say;$('#sayIn').onkeydown=e=>{if(e.key==='Enter')send_say()};
 async function send_say(){const m=$('#sayIn').value.trim();if(!m)return;
  await api('cmd',{c:'say '+m});$('#sayIn').value=''}
@@ -1058,9 +1059,13 @@ function consLine(txt,me){const c=$('#console'),stick=c.scrollTop+c.clientHeight
  const d=document.createElement('div');if(me)d.className='me';d.textContent=txt;c.append(d);
  while(c.childElementCount>600)c.firstChild.remove();
  if(stick)c.scrollTop=c.scrollHeight}
-$('#cmdBtn').onclick=runCmd;$('#cmdIn').onkeydown=e=>{if(e.key==='Enter')runCmd()};
+let hist=[],hi=0;
+$('#cmdBtn').onclick=runCmd;
+$('#cmdIn').onkeydown=e=>{if(e.key==='Enter')runCmd();
+ else if(e.key==='ArrowUp'&&hi>0){hi--;$('#cmdIn').value=hist[hi];e.preventDefault()}
+ else if(e.key==='ArrowDown'&&hi<hist.length){hi++;$('#cmdIn').value=hist[hi]||'';e.preventDefault()}};
 async function runCmd(){const c=$('#cmdIn').value.trim();if(!c)return;
- consLine('> '+c,true);$('#cmdIn').value='';
+ hist.push(c);hi=hist.length;consLine('> '+c,true);$('#cmdIn').value='';
  const o=await api('cmd',{c});
  consLine(o.up?(o.out||'(no output)'):'(server offline)')}
 for(const[id,op]of[['pwrStart','start'],['pwrRestart','restart'],['pwrStop','stop']])

@@ -128,4 +128,8 @@ assert "'X-Forwarded-Proto'" in src and 'plain_local' not in src, \
     'Secure must depend on X-Forwarded-Proto, never on Host guessing'
 assert remora.Handler.timeout == 60, 'idle-connection timeout missing'
 
+# ── console keyboard UX: command history + enter-to-add on whitelist ──
+assert 'ArrowUp' in remora.PAGE and 'ArrowDown' in remora.PAGE
+assert "$('#wlIn').onkeydown" in remora.PAGE, 'enter in whitelist input must add'
+
 print('all checks pass')

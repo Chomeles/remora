@@ -233,7 +233,11 @@ def _ingest(line, day, live=True):
             CONSOLE.append(line)
         if ev:
             FEED.append(ev)
-        if WL_LINE.search(line) and 'INFO' in line:
+        # ev is None: a chat line '<Bob> whitelist me name=Griefer' matches the
+        # scrapers below and planted an attacker-chosen name in the panel's
+        # rejected-joins list — next to a one-click whitelist button. Real
+        # rejection lines never parse as chat/join/leave events.
+        if ev is None and WL_LINE.search(line) and 'INFO' in line:
             if m := (WL_NAME.search(line) or WL_NAME2.search(line)):
                 # bounded: bots probing random names must not grow this forever;
                 # pop-then-set keeps insertion order = recency, evict oldest.

@@ -111,6 +111,11 @@ _classic = ('[20:24:12] [Server thread/INFO]: Disconnecting com.mojang.authlib.'
             ' (/127.0.0.1:51234): You are not white-listed on this server!')
 remora._ingest(_classic, 'd', live=False)
 assert list(remora.ATTEMPTS) == ['.Gamer Tag'], remora.ATTEMPTS
+# chat/say must not spoof the rejected-joins list — '<Bob> whitelist name=Griefer'
+# used to plant an attacker-chosen name next to a one-click ✅ whitelist button
+remora._ingest('[12:00:00] [Server thread/INFO]: <Bob> pls whitelist me name=Griefer', 'd', live=False)
+remora._ingest('[12:00:01] [Server thread/INFO]: [Not Secure] [Bob] whitelist name=Sneaky', 'd', live=False)
+assert 'Griefer' not in remora.ATTEMPTS and 'Sneaky' not in remora.ATTEMPTS, remora.ATTEMPTS
 remora.ATTEMPTS.clear(); remora.FEED.clear(); remora.CONSOLE.clear()
 
 # ── console auto-follows to newest when its tab is first opened ──

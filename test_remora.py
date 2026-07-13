@@ -304,5 +304,19 @@ with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as store
         assert 'save-off' not in calls, 'disk guard must not leave autosave off'
     finally:
         remora.rcon, _sh.disk_usage = orig_rcon, orig_disk
+    # C) a dangling symlink (or a plugin temp file vanishing mid-walk) must be
+    # SKIPPED — with dereference=True it used to abort EVERY backup, so one
+    # broken link meant scheduled backups silently failed night after night
+    (real / 'ghost').symlink_to(real / 'nope')
+    calls, (orig_rcon, orig_disk) = _run_backup_env(10**12)
+    try:
+        assert remora.run_backup() is None, 'dangling symlink must not abort backup'
+        tgz = list((d / 'backups').glob('backup-*.tgz'))
+        assert len(tgz) == 1, tgz
+        names = _tar.open(tgz[0]).getnames()
+        assert 'world/level.dat' in names and 'world/ghost' not in names, names
+        assert 'save-on' in calls
+    finally:
+        remora.rcon, _sh.disk_usage = orig_rcon, orig_disk
 
 print('all checks pass')

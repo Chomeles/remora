@@ -390,6 +390,23 @@ def backup_targets():
         tgt.append(SERVER_DIR / 'plugins')
     return tgt
 
+def tar_targets(tar, targets):
+    """Add entry-by-entry (not tar.add recursive): dereference=True stats every
+    entry, so ONE dangling symlink in world/ or plugins/, or a plugin temp file
+    vanishing mid-walk (dynmap tiles, .tmp renames), aborted EVERY backup.
+    Skip just that entry — world files are stable here (save-off + flush)."""
+    stack = [(t, t.name) for t in targets]
+    while stack:
+        p, arc = stack.pop()
+        if '/backups/' in arc or arc.endswith('.jar'):
+            continue
+        try:
+            tar.add(p, arcname=arc, recursive=False)
+            kids = list(p.iterdir()) if p.is_dir() else []
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        stack.extend((c, f'{arc}/{c.name}') for c in kids)
+
 def run_backup(reason='manual'):
     if not BACKUP_LOCK.acquire(blocking=False):
         publish({'type': 'backup', 'ok': False, 'msg': 'backup already running'})
@@ -404,8 +421,13 @@ def run_backup(reason='manual'):
                      'msg': 'server not responding — backup aborted'})
             return 'server unresponsive'
         targets = backup_targets()
-        need = sum(f.stat().st_size for t in targets for f in
-                   (t.rglob('*') if t.is_dir() else [t]) if f.is_file())
+        def size_of(f):
+            try:                     # a file listed a moment ago may already
+                return f.stat().st_size if f.is_file() else 0   # be gone
+            except OSError:
+                return 0
+        need = sum(size_of(f) for t in targets for f in
+                   (t.rglob('*') if t.is_dir() else [t]))
         if shutil.disk_usage(SERVER_DIR).free < need * 0.8 + 500_000_000:
             publish({'type': 'backup', 'ok': False, 'msg': 'not enough disk space'})
             return 'not enough disk space'
@@ -416,16 +438,12 @@ def run_backup(reason='manual'):
         rcon('save-all flush')
         time.sleep(3)
         try:
-            def flt(ti):
-                return None if '/backups/' in ti.name or ti.name.endswith('.jar') \
-                    else ti
             try:
                 # dereference=True: a symlinked world dir would otherwise store
                 # only the bare symlink entry — a '0 MB done' backup with no data.
                 with tarfile.open(BACKUP_DIR / name, 'w:gz', compresslevel=1,
                                   dereference=True) as tar:
-                    for t in targets:
-                        tar.add(t, arcname=t.name, filter=flt)
+                    tar_targets(tar, targets)
             except OSError:
                 # a file vanishing mid-tar leaves a well-formed but INCOMPLETE
                 # archive that reads clean and would displace a good one at prune.

@@ -454,9 +454,16 @@ def list_backups():
 def power(op):
     """start/stop/restart in a background thread; attach-mode: start uses the
     admin-configured command (e.g. 'systemctl start minecraft'), stop is a
-    graceful rcon stop."""
+    graceful rcon stop. Returns an error string, or None if the op began."""
+    start_cmd = STATE.get('start_cmd', '')
+    if op in ('start', 'restart') and not start_cmd:
+        # refuse BEFORE stopping anything: a restart with no start command
+        # used to stop the server and only then discover it couldn't start it
+        # back — a scheduled 3am restart left the server down until morning.
+        msg = 'no start command configured (Settings)'
+        publish({'type': 'backup', 'ok': False, 'msg': msg})   # scheduler path
+        return msg
     def go():
-        start_cmd = STATE.get('start_cmd', '')
         if op in ('stop', 'restart'):
             rcon('stop')
             for _ in range(60):
@@ -465,10 +472,6 @@ def power(op):
                 time.sleep(2)
             set_status(False)
         if op in ('start', 'restart'):
-            if not start_cmd:
-                publish({'type': 'backup', 'ok': False,
-                         'msg': 'no start command configured (Settings)'})
-                return
             time.sleep(2)
             try:
                 subprocess.run(start_cmd, shell=True, timeout=120,
@@ -476,6 +479,7 @@ def power(op):
             except subprocess.SubprocessError as e:
                 publish({'type': 'backup', 'ok': False, 'msg': f'start failed: {e}'})
     threading.Thread(target=go, daemon=True).start()
+    return None
 
 # ── scheduler ────────────────────────────────────────────────────────────
 def scheduler_loop():
@@ -642,8 +646,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.backup_del(body)
         if path == '/power':
             if body.get('op') in ('start', 'stop', 'restart'):
-                power(body['op'])
-                return self._json({'ok': True})
+                err = power(body['op'])
+                return self._json({'error': err}, 400) if err \
+                    else self._json({'ok': True})
             return self._json({'error': 'bad op'}, 400)
         if path == '/settings':
             return self.settings(body)

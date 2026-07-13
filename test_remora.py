@@ -214,6 +214,20 @@ with tempfile.TemporaryDirectory() as td:
     c2.close()
     srv.shutdown()
 
+# ── restart with no start_cmd must refuse BEFORE stopping — it used to stop
+#    the server and only then find it couldn't start it back (down until an
+#    admin noticed; worst via a scheduled 3am restart) ──
+_calls, _orig_rcon, _orig_pub = [], remora.rcon, remora.publish
+remora.rcon = lambda cmd, timeout=10: (_calls.append(cmd), '')[1]
+remora.publish = lambda ev: None
+remora.STATE['start_cmd'] = ''
+try:
+    for op in ('restart', 'start'):
+        assert remora.power(op), f'{op} with no start_cmd must return an error'
+    assert not _calls, f'must refuse before any rcon command, got {_calls}'
+finally:
+    remora.rcon, remora.publish = _orig_rcon, _orig_pub
+
 # ── lone surrogate in a command must not raise (killed /cmd + scheduler thread) ──
 remora._rcon_pkt(1, 2, '\ud800list')   # would raise UnicodeEncodeError before the fix
 

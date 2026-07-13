@@ -118,6 +118,26 @@ remora._ingest('[12:00:01] [Server thread/INFO]: [Not Secure] [Bob] whitelist na
 assert 'Griefer' not in remora.ATTEMPTS and 'Sneaky' not in remora.ATTEMPTS, remora.ATTEMPTS
 remora.ATTEMPTS.clear(); remora.FEED.clear(); remora.CONSOLE.clear()
 
+# ── panel restart: load_history seeds the Console from latest.log (a crashed
+#    server's last output must be visible, not a blank box), but NOT from
+#    rotated .gz history (date-less old sessions would read as recent) ──
+import gzip as _gz, tempfile as _tf
+from pathlib import Path as _P
+with _tf.TemporaryDirectory() as _td:
+    _d = _P(_td)
+    (_d / 'logs').mkdir()
+    (_d / 'logs' / 'latest.log').write_text(
+        '[03:12:44] [Server thread/ERROR]: java.lang.OutOfMemoryError\n')
+    with _gz.open(_d / 'logs' / '2026-07-10-1.log.gz', 'wt') as _g:
+        _g.write('[01:00:00] [Server thread/INFO]: <Old> gz session chat\n')
+    remora.SERVER_DIR, remora.LOG_PATH = _d, _d / 'logs' / 'latest.log'
+    remora.load_history()
+    assert list(remora.CONSOLE) == \
+        ['[03:12:44] [Server thread/ERROR]: java.lang.OutOfMemoryError'], remora.CONSOLE
+    assert any(e['msg'] == 'gz session chat' for e in remora.FEED), \
+        'gz history must still seed the chat feed'
+remora.ATTEMPTS.clear(); remora.FEED.clear(); remora.CONSOLE.clear()
+
 # ── console auto-follows to newest when its tab is first opened ──
 assert "if(!c.scrollTop)c.scrollTop=c.scrollHeight" in remora.PAGE, \
     'console tab must jump to newest line on open'

@@ -219,17 +219,21 @@ def load_history():
     try:
         day = date.fromtimestamp(LOG_PATH.stat().st_mtime).isoformat()
         for line in open(LOG_PATH, encoding='utf-8', errors='replace'):
-            _ingest(line, day, live=False)
+            _ingest(line, day, live=False, seed_console=True)
     except OSError:
         pass
 
-def _ingest(line, day, live=True):
+def _ingest(line, day, live=True, seed_console=False):
     line = line.rstrip('\n')
     if not line:
         return
     ev = parse_line(line, day)
     with BUF_LOCK:
-        if live:
+        # seed_console: load_history replays latest.log into CONSOLE so a
+        # panel restart shows the current session's output (e.g. last night's
+        # crash) instead of a blank box. Rotated .gz history stays out — its
+        # date-less HH:MM:SS lines would pass off old sessions as recent.
+        if live or seed_console:
             CONSOLE.append(line)
         if ev:
             FEED.append(ev)

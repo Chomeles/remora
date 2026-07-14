@@ -121,3 +121,7 @@ RCON framing). The whole panel is ~1200 lines in one file — read it.
 ## License
 
 MIT
+
+## Author
+
+Built by [Sharko IT-Services](https://sharko.icu) — custom websites & fullstack web apps from Hamburg.

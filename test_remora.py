@@ -256,6 +256,30 @@ finally:
 # ── lone surrogate in a command must not raise (killed /cmd + scheduler thread) ──
 remora._rcon_pkt(1, 2, '\ud800list')   # would raise UnicodeEncodeError before the fix
 
+# ── daemon loops survive uncaught crashes — one weird tps string used to kill
+#    metrics_loop silently; the UI then rendered stale data until a restart ──
+import contextlib, io
+_runs, _sleeps = [], []
+_orig_sleep = remora.time.sleep
+remora.time.sleep = lambda s: _sleeps.append(s)
+def _flaky():
+    _runs.append(1)
+    if len(_runs) < 3:
+        raise ValueError('boom')
+    raise SystemExit          # not an Exception: must escape, ending the test loop
+try:
+    with contextlib.redirect_stderr(io.StringIO()) as _err:
+        remora.supervise(_flaky)
+    assert False, 'SystemExit must escape supervise'
+except SystemExit:
+    pass
+finally:
+    remora.time.sleep = _orig_sleep
+assert len(_runs) == 3 and _sleeps == [5, 5], (_runs, _sleeps)
+assert 'ValueError' in _err.getvalue(), 'crash must be logged, not swallowed'
+assert 'supervise, args=(fn,)' in inspect.getsource(remora.main), \
+    'daemon loops must be wrapped in supervise'
+
 # ── case-insensitive filesystems must not leak remora.json via REMORA.JSON ──
 with tempfile.TemporaryDirectory() as td:
     b = Path(td)

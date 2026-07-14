@@ -15,6 +15,7 @@ MIT license. Python 3.11+. No dependencies.
 """
 import argparse, gzip, hashlib, hmac, json, os, queue, re, secrets
 import shutil, socket, struct, subprocess, sys, tarfile, threading, time
+import traceback
 import urllib.parse
 from datetime import date, datetime
 from http.cookies import SimpleCookie
@@ -1245,6 +1246,20 @@ window.addEventListener('resize',drawSparks);
 </script>'''
 
 # ── startup ──────────────────────────────────────────────────────────────
+def supervise(fn):
+    """Daemon loops must not die: one uncaught exception (a plugin's weird
+    'tps' reply making float() choke, a full disk at the wrong moment) used to
+    silently kill tail/metrics/scheduler until the panel was restarted — the
+    UI kept rendering stale data with no hint. Log it and restart the loop;
+    the 5s pause keeps a hot crash-loop from spinning CPU and flooding logs."""
+    while True:
+        try:
+            fn()
+        except Exception:
+            print(f'{fn.__name__} crashed — restarting in 5s\n'
+                  f'{traceback.format_exc()}', file=sys.stderr, flush=True)
+            time.sleep(5)
+
 def read_props():
     props = {}
     try:
@@ -1313,7 +1328,7 @@ def main():
 
     load_history()
     for fn in (tail_loop, metrics_loop, scheduler_loop):
-        threading.Thread(target=fn, daemon=True).start()
+        threading.Thread(target=supervise, args=(fn,), daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     srv.daemon_threads = True
     print(f'remora {VERSION} on http://{args.host}:{args.port} -> {SERVER_DIR}'

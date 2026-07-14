@@ -331,6 +331,18 @@ def find_java_pid():
             return int(p)
     return None
 
+def parse_tps(out):
+    """'tps' reply -> float capped at 20, or None. Some servers answer 'tps'
+    with version text ('... (MC: 1.20.1)') — float('1.20.1') raised, and even
+    under supervise() that crash-looped metrics_loop forever: stderr spam
+    every ~25s and METRICS never sampled (sparklines permanently empty)."""
+    if m := re.search(r':\s*\*?([\d.]+)', out or ''):
+        try:
+            return min(float(m[1]), 20.0)
+        except ValueError:
+            return None
+    return None
+
 def metrics_loop():
     global ONLINE
     pid, prev_cpu, prev_t = None, None, None
@@ -341,11 +353,7 @@ def metrics_loop():
         players = names_after_colon(out) if out else []
         with BUF_LOCK:
             ONLINE = players
-        tps = None
-        if out is not None:
-            t_out = rcon('tps', timeout=5) or ''
-            if m := re.search(r':\s*\*?([\d.]+)', t_out):
-                tps = min(float(m[1]), 20.0)
+        tps = parse_tps(rcon('tps', timeout=5)) if out is not None else None
         rss = cpu = None
         if pid is None or not is_our_java(pid):   # revalidate every sample
             pid, prev_cpu = find_java_pid(), None

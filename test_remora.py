@@ -256,6 +256,15 @@ finally:
 # ── lone surrogate in a command must not raise (killed /cmd + scheduler thread) ──
 remora._rcon_pkt(1, 2, '\ud800list')   # would raise UnicodeEncodeError before the fix
 
+# ── tps parse: version-text replies ('... (MC: 1.20.1)') must yield None, not
+#    a ValueError that crash-loops metrics_loop (METRICS never sampled) ──
+assert remora.parse_tps('TPS from last 1m, 5m, 15m: *20.0, 19.75, 18.2') == 20.0
+assert remora.parse_tps('TPS: 19.5') == 19.5
+assert remora.parse_tps('TPS: 25.3') == 20.0, 'cap at 20'
+assert remora.parse_tps('This server is running Paper version git-196 (MC: 1.20.1)') is None
+assert remora.parse_tps('Unknown command: tps') is None
+assert remora.parse_tps(None) is None and remora.parse_tps('') is None
+
 # ── daemon loops survive uncaught crashes — one weird tps string used to kill
 #    metrics_loop silently; the UI then rendered stale data until a restart ──
 import contextlib, io
